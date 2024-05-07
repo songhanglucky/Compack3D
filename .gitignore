@@ -1,0 +1,9 @@
+*.swp
+*.ipynb_checkpoints
+.DS_Store
+*.so
+*.dat
+build*
+tmp*
+local_test_*
+__pycache__

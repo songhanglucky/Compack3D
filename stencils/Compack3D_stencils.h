@@ -1,0 +1,5 @@
+
+#ifndef _COMPACK3D_STENCILS_H
+#define _COMPACK3D_STENCILS_H
+
+#endif
