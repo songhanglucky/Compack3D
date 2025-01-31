@@ -10,11 +10,13 @@ endif()
 set(src_host
     Compack3D_utils.cpp
     Compack3D_penta.cpp
+    Compack3D_tri.cpp
 )
 
 set(src_device
     Compack3D_utils_kernels.cu
     Compack3D_penta_kernels.cu
+    Compack3D_tri_kernels.cu
 )
 
 set(src_api

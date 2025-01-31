@@ -17,23 +17,6 @@ namespace penta {
 
 
 /*!
- * Data structure of a 3x3 system for factorization
- * --                         -- --      --   --   --
- * |  d_prev   l_curr        0 | | a_prev |   |  0  |
- * |  u_prev   d_curr   l_next | | a_curr | = |  1  |
- * |       0   u_curr   d_next | | a_next |   |  0  |
- * --                         -- --      --   --   --
- */
-template<typename RealType>
-struct FactSysTri {
-    RealType prev[2]; // d, u
-    RealType curr[3]; // l, d, u
-    RealType next[2]; // l, d
-};
-
-
-
-/*!
  * Data structure of a 5x5 system for factorization
  * --                                                         -- --         --     --   --
  * |  l1_prev2    l2_prev1          0          0            0  | |  a_prev2  |     |  0  |
@@ -63,9 +46,6 @@ void factPartitionedPentaHost(RealType*, RealType*, RealType*, RealType*, RealTy
 
 template<typename MemSpaceType, typename RealType>
 void factPartitionedPenta(RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, const unsigned int, const unsigned int, const unsigned int, MPI_Comm);
-
-template<typename RealType>
-void solFact(RealType&, RealType&, RealType&, FactSysTri<RealType>&, const int);
 
 template<typename RealType>
 void solFact(RealType&, RealType&, RealType&, RealType&, RealType&, FactSysPenta<RealType>&, const int);

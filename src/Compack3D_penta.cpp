@@ -66,44 +66,6 @@ void mat2x2AMultInvB(RealType* C, const RealType* A, const RealType* B) {
 
 
 
-/*!
- * Solve a 3x3 system for factorization
- * See the linear system above. The right-hand side is fixed [0, 1, 0]
- *
- * 0 b x x x
- *     | | |-- row next
- *     | |---- row curr
- *     |------ row prev
- *
- * \param [out]      a_prev     The coefficient for parallel cyclic reduction using row i-1
- * \param [out]      a_curr     The coefficient for parallel cyclic reduction using row i
- * \param [out]      a_next     The coefficient for parallel cyclic reduction using row i+1
- * \param [in, out]  A          The left-hand side 3x3 system (identical zero entries are fixed). The values are not preserved after the function is called.
- * \param [in]       row_label  The validity of each row evaluated bit-wised
- */
-template<typename RealType>
-void solFact(RealType& a_prev, RealType& a_curr, RealType& a_next, FactSysTri<RealType>& A, const int row_label) {
-    assert( (row_label & 0b010) == 0b010 );
-
-    if ( (row_label & 0b100) == 0b000 ) {
-        A.prev[0] = 1.0;
-        A.prev[1] = 0.0;
-        A.curr[0] = 0.0;
-    }
-
-    if ( (row_label & 0b001) == 0b000 ) {
-        A.next[0] = 0.0;
-        A.next[1] = 1.0;
-        A.curr[2] = 0.0;
-    }
-
-    a_curr = 1.0 / ( A.curr[1] - (A.curr[0] * A.prev[1] / A.prev[0]) - (A.curr[2] * A.next[0] / A.next[1]) );
-    a_prev = -A.curr[0] * a_curr / A.prev[0];
-    a_next = -A.curr[2] * a_curr / A.next[1];
-}
-
-
-
 
 /*!
  * Solve a 5x5 system for factorization
@@ -548,6 +510,24 @@ void distFactPenta(RealType* block_fact_prev, RealType* block_fact_curr, RealTyp
             for (int i = 0; i < fact_buffer_size; i++) block_fact_prev[i];
         } catch (...) {
             throw std::invalid_argument("Buffer block_fact_prev encounters a memory access error.");
+        }
+
+        try { // Check block_fact_curr buffer
+            for (int i = 0; i < fact_buffer_size; i++) block_fact_curr[i];
+        } catch (...) {
+            throw std::invalid_argument("Buffer block_fact_curr encounters a memory access error.");
+        }
+
+        try { // Check block_fact_next buffer
+            for (int i = 0; i < fact_buffer_size; i++) block_fact_next[i];
+        } catch (...) {
+            throw std::invalid_argument("Buffer block_fact_next encounters a memory access error.");
+        }
+
+        try { // Check LDU buffer
+            for (int i = 0; i < 12; i++) LDU[i];
+        } catch (...) {
+            throw std::invalid_argument("Buffer LDU encounters a memory access error.");
         }
     }
 #endif
@@ -1021,6 +1001,7 @@ void factPartitionedPentaHost(
  * \tparam    RealType        real type of factorization either double or float
  * \param [out]    fact_local_prev_2_buf    pointer to the array of factorization coefficients of the 2nd previous row for each step in local PCR  \see locFactIdx
  * \param [out]    fact_local_prev_1_buf    pointer to the array of factorization coefficients of the 1st previous row for each step in local PCR  \see locFactIdx
+ * \param [out]    fact_local_curr_buf      pointer to the array of factorization coefficients of the currrent row for each step in local PCR for normalization
  * \param [out]    fact_local_next_1_buf    pointer to the array of factorization coefficients of the 1st next row for each step in local PCR \see locFactIdx
  * \param [out]    fact_local_next_2_buf    pointer to the array of factorization coefficients of the 2nd next row for each step in local PCR \see locFactIdx
  * \param [out]    fact_dist_prev_buf       pointer to the array of factorization coefficients of the previous block for each step in the distributed solve
@@ -1075,6 +1056,9 @@ void allocFactBuffers(
 
 
 
+/*!
+ * Destroy the factorization buffers and free out the memory
+ */
 template<typename MemSpaceType, typename RealType>
 void freeFactBuffers(
         RealType* fact_local_prev_2, RealType* fact_local_prev_1, RealType* fact_local_curr, RealType* fact_local_next_1, RealType* fact_local_next_2,
@@ -1112,6 +1096,8 @@ void freeFactBuffers(
  * \param [out] fact_dist_next       factorization coefficients of the next block in the distributed solve in each step
  * \param [out] Si                   inv(Di) * Li_tilde see Eq.(15) in H. Song, K.V. Matsuno, J.R. West et al., JCP, 2022
  * \param [out] Ri                   inv(Di) * Ui_tilde see Eq.(16) in H. Song, K.V. Matsuno, J.R. West et al., JCP, 2022
+ * \param [out] Li_tilde_tail        non-zero entries in the Li_tilde
+ * \param [out] Ui_tilde_head        non-zero entries in the Ui_tilde
  * \param [in]  part_L2              the 2nd-lower diagonal elements in the penta-diagonal system within the distributed partition
  * \param [in]  part_L1              the 1st-lower diagonal elements in the penta-diagonal system within the distributed partition
  * \param [in]  part_D               the diagonal elements in the penta-diagonal system within the distributed partition
@@ -1172,8 +1158,8 @@ void factPartitionedPenta(
         fact_dist_prev_host    = fact_dist_prev;
         fact_dist_curr_host    = fact_dist_curr;
         fact_dist_next_host    = fact_dist_next;
-        Si_host                = Si;                     
-        Ri_host                = Ri;                     
+        Si_host                = Si;
+        Ri_host                = Ri;
         Li_tilde_tail_host     = Li_tilde_tail;
         Ui_tilde_head_host     = Ui_tilde_head;
     }
@@ -1455,12 +1441,9 @@ void distSolve (RealType* x_curr, RealTypeComm* x_prev_buf, RealTypeComm* x_curr
 
 
 
-
-
-// EXPLICIT INSTANTIATION
-template void solFact<double>(double&, double&, double&, FactSysTri<double>&, const int);
-template void solFact< float>( float&,  float&,  float&, FactSysTri< float>&, const int);
-
+////////////////////////////////////////
+//////// EXPLICIT INSTANTIATION //////// 
+////////////////////////////////////////
 template void solFact<double>(double&, double&, double&, double&, double&, FactSysPenta<double>&, const int);
 template void solFact< float>( float&,  float&,  float&,  float&,  float&, FactSysPenta< float>&, const int);
 

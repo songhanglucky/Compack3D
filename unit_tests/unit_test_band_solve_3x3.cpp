@@ -3,9 +3,11 @@
 #include <cassert>
 #include <stdexcept>
 #include <cmath>
+#include "Compack3D_tri.h"
 #include "Compack3D_penta.h"
 
 using namespace cmpk;
+using namespace tri;
 using namespace penta;
 
 void resetTriSys(FactSysTri<double>& A) {
