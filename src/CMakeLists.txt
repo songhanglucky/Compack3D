@@ -8,9 +8,9 @@ endif()
 
 
 set(src_host
-    Compack3D_utils.cpp
     Compack3D_penta.cpp
     Compack3D_tri.cpp
+    Compack3D_utils.cpp
 )
 
 set(src_device

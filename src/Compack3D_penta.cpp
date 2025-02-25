@@ -981,6 +981,7 @@ void factPartitionedPentaHost(
     MPI_Waitall(4, &mpi_reqs[0], &mpi_stats[0]);
 
     RealType LDU_hat [12];
+    for (int i = 0; i < 12; i++) LDU_hat[i] = RealType(0.0);
     RealType* L_hat = &LDU_hat[0];
     RealType* D_hat = &LDU_hat[4];
     RealType* U_hat = &LDU_hat[8];
@@ -1325,8 +1326,8 @@ void distSolve (RealType* x_curr, RealTypeComm* x_prev_buf, RealTypeComm* x_curr
             } else {
                 deviceFence();
             }
-            MPI_Isend(x_curr_buf_host, 2, MPIDataType<RealTypeComm>::value, rank_next, 451, comm_sub, &mpi_reqs[2]);
-            MPI_Isend(x_curr_buf_host, 2, MPIDataType<RealTypeComm>::value, rank_prev, 461, comm_sub, &mpi_reqs[3]);
+            MPI_Isend(x_curr_buf_host, NUM_COMM_ENTRIES, MPIDataType<RealTypeComm>::value, rank_next, 451, comm_sub, &mpi_reqs[2]);
+            MPI_Isend(x_curr_buf_host, NUM_COMM_ENTRIES, MPIDataType<RealTypeComm>::value, rank_prev, 461, comm_sub, &mpi_reqs[3]);
             MPI_Waitall(4, mpi_reqs, mpi_stats);
             if constexpr (!USE_DEVICE_AWARE_COMM) {
                 deepCopy<MemSpaceType, MemSpace::Host, RealTypeComm>(x_next_buf, x_next_buf_host, NUM_COMM_ENTRIES);
@@ -1354,8 +1355,8 @@ void distSolve (RealType* x_curr, RealTypeComm* x_prev_buf, RealTypeComm* x_curr
 
             if(attach_row_lo <= rank_curr && rank_curr < N_attached) {
                 if constexpr (USE_DEVICE_AWARE_COMM) deviceFence();
-                MPI_Irecv(x_prev_buf_host, 2, MPIDataType<RealTypeComm>::value, rank_prev, 451, comm_sub, &mpi_reqs[0]);
-                MPI_Irecv(x_next_buf_host, 2, MPIDataType<RealTypeComm>::value, rank_next, 461, comm_sub, &mpi_reqs[1]);
+                MPI_Irecv(x_prev_buf_host, NUM_COMM_ENTRIES, MPIDataType<RealTypeComm>::value, rank_prev, 451, comm_sub, &mpi_reqs[0]);
+                MPI_Irecv(x_next_buf_host, NUM_COMM_ENTRIES, MPIDataType<RealTypeComm>::value, rank_next, 461, comm_sub, &mpi_reqs[1]);
                 MPI_Waitall(2, &mpi_reqs[0], &mpi_stats[0]);
                 if constexpr (!USE_DEVICE_AWARE_COMM) {
                     deepCopy<MemSpaceType, MemSpace::Host>(x_next_buf, x_next_buf_host, NUM_COMM_ENTRIES);
@@ -1371,7 +1372,7 @@ void distSolve (RealType* x_curr, RealTypeComm* x_prev_buf, RealTypeComm* x_curr
                 } else {
                     deviceFence();
                 }
-                MPI_Send(x_curr_buf_host, 2, MPIDataType<RealTypeComm>::value, rank_prev, 461, comm_sub);
+                MPI_Send(x_curr_buf_host, NUM_COMM_ENTRIES, MPIDataType<RealTypeComm>::value, rank_prev, 461, comm_sub);
             }
 
             if(attach_row_lo <= rank_next && rank_next < N_attached) {
@@ -1381,7 +1382,7 @@ void distSolve (RealType* x_curr, RealTypeComm* x_prev_buf, RealTypeComm* x_curr
                 } else {
                     deviceFence();
                 }
-                MPI_Send(x_curr_buf_host, 2, MPIDataType<RealTypeComm>::value, rank_next, 451, comm_sub);
+                MPI_Send(x_curr_buf_host, NUM_COMM_ENTRIES, MPIDataType<RealTypeComm>::value, rank_next, 451, comm_sub);
             }
 
             fact_idx_orig += 4;
@@ -1487,6 +1488,12 @@ template void distSolve<double,  float, MemSpace::Device>(double*,  float*,  flo
 
 template void distSolve<double, double, MemSpace::Device>(double*, double*, double*, double*, double*, double*, double*, const unsigned int, const unsigned int, MPI_Comm, MPI_Request*, MPI_Status*, double*, double*, double*);
 template void distSolve<double,  float, MemSpace::Device>(double*,  float*,  float*,  float*, double*, double*, double*, const unsigned int, const unsigned int, MPI_Comm, MPI_Request*, MPI_Status*,  float*,  float*,  float*);
+
+template void distSolve<double, double, MemSpace::Host>(double*, double*, double*, double*, double*, double*, double*, const unsigned int, const unsigned int, MPI_Comm, double*, double*, double*);
+template void distSolve<double,  float, MemSpace::Host>(double*,  float*,  float*,  float*, double*, double*, double*, const unsigned int, const unsigned int, MPI_Comm,  float*,  float*,  float*);
+
+template void distSolve<double, double, MemSpace::Host>(double*, double*, double*, double*, double*, double*, double*, const unsigned int, const unsigned int, MPI_Comm, MPI_Request*, MPI_Status*, double*, double*, double*);
+template void distSolve<double,  float, MemSpace::Host>(double*,  float*,  float*,  float*, double*, double*, double*, const unsigned int, const unsigned int, MPI_Comm, MPI_Request*, MPI_Status*,  float*,  float*,  float*);
 
 template void freeFactBuffers<MemSpace::Host  , double>(double*, double*, double*, double*, double*, double*, double*, double*, double*, double*, double*, double*);
 template void freeFactBuffers<MemSpace::Device, double>(double*, double*, double*, double*, double*, double*, double*, double*, double*, double*, double*, double*);

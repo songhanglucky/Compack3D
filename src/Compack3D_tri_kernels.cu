@@ -500,12 +500,9 @@ void kernelReduceCurrBlockSymm(
         const RealType                   fact_next,
         const unsigned int N_batch)
 {
-    // The index of the system is (i,j) and the solution is in column-major
     #define IDX_J        (blockIdx.x * blockDim.x + threadIdx.x)
     #define TID_J                                   threadIdx.x
     #define NUM_THREADS   blockDim.x
-    #define  SM_IDX(J)   (blockDim.x + (J))
-    #define ARR_IDX(J)   (N_batch    + (J))
 
     const bool VALID_ENTRY = IDX_J < N_batch;
     extern __shared__ char sm_general[];
@@ -514,26 +511,21 @@ void kernelReduceCurrBlockSymm(
     RealTypeComm* sm_next = reinterpret_cast<RealTypeComm*>(&sm_general[NUM_THREADS * (sizeof(RealType) + sizeof(RealTypeComm))]);
 
     if (VALID_ENTRY) {
-        const unsigned int  sm_j =  SM_IDX(TID_J);
-        const unsigned int arr_j = ARR_IDX(IDX_J);
-        sm_curr[sm_j] = x_curr    [arr_j];
-        sm_prev[sm_j] = x_prev_buf[arr_j];
-        sm_next[sm_j] = x_next_buf[arr_j];
+        sm_curr[TID_J] = x_curr    [IDX_J];
+        sm_prev[TID_J] = x_prev_buf[IDX_J];
+        sm_next[TID_J] = x_next_buf[IDX_J];
     }
 
     __syncthreads();
     if (VALID_ENTRY) {
-        const unsigned int sm_idx  = SM_IDX(TID_J);
-        x_curr[ARR_IDX(IDX_J)]     = fact_curr * sm_curr[sm_idx]
-                                   + fact_prev * sm_prev[sm_idx]
-                                   + fact_next * sm_next[sm_idx];
+        x_curr[IDX_J] = fact_curr * sm_curr[TID_J]
+                      + fact_prev * sm_prev[TID_J]
+                      + fact_next * sm_next[TID_J];
     }
 
     #undef IDX_J
     #undef TID_J
     #undef NUM_THREADS
-    #undef  SM_IDX
-    #undef ARR_IDX
 }
 
 
@@ -563,9 +555,9 @@ void reduceCurrBlockSymm(
 {
     unsigned int num_threads_j = 256;
     while (num_threads_j > N_batch) num_threads_j >>= 1;
-    dim3 block_size = dim3(num_threads_j, 2);
-    dim3  grid_size = dim3((N_batch + num_threads_j - 1) / num_threads_j, 1);
-    unsigned int sm_size = num_threads_j * (sizeof(RealType) + sizeof(RealTypeComm));
+    int block_size = num_threads_j;
+    int  grid_size = (N_batch + num_threads_j - 1) / num_threads_j;
+    unsigned int sm_size = num_threads_j * (sizeof(RealType) + 2 * sizeof(RealTypeComm));
     kernelReduceCurrBlockSymm<RealType, RealTypeComm><<<grid_size, block_size, sm_size>>>(x_curr, x_prev_buf, x_next_buf, fact_curr, fact_prev, fact_next, N_batch);
 }
 
@@ -594,8 +586,6 @@ void kernelReduceCurrBlockOneSide(
     #define IDX_J        (blockIdx.x * blockDim.x + threadIdx.x)
     #define TID_J                                   threadIdx.x
     #define NUM_THREADS   blockDim.x
-    #define  SM_IDX(J)   (blockDim.x + (J))
-    #define ARR_IDX(J)   (N_batch    + (J))
 
     const bool VALID_ENTRY = IDX_J < N_batch;
     extern __shared__ char sm_general[];
@@ -603,24 +593,19 @@ void kernelReduceCurrBlockOneSide(
     RealTypeComm* sm_nbr = reinterpret_cast<RealTypeComm*>(&sm_general[NUM_THREADS * sizeof(RealType)]);
 
     if (VALID_ENTRY) {
-        const unsigned int  sm_j =  SM_IDX(TID_J);
-        const unsigned int arr_j = ARR_IDX(IDX_J);
-        sm_cur[sm_j] = x_cur    [arr_j];
-        sm_nbr[sm_j] = x_nbr_buf[arr_j];
+        sm_cur[TID_J] = x_cur    [IDX_J];
+        sm_nbr[TID_J] = x_nbr_buf[IDX_J];
     }
 
     __syncthreads();
     if (VALID_ENTRY) {
-        const unsigned int sm_idx = SM_IDX(TID_J);
-        x_cur[ARR_IDX(IDX_J)]     = fact_cur * sm_cur[sm_idx]
-                                  + fact_nbr * sm_nbr[sm_idx];
+        x_cur[IDX_J] = fact_cur * sm_cur[TID_J]
+                     + fact_nbr * sm_nbr[TID_J];
     }
 
     #undef IDX_J
     #undef TID_J
     #undef NUM_THREADS
-    #undef  SM_IDX
-    #undef ARR_IDX
 }
 
 
@@ -648,7 +633,7 @@ void reduceCurrBlockOneSide(
     while (num_threads_j > N_batch) num_threads_j >>= 1;
     dim3 block_size = dim3(num_threads_j);
     dim3  grid_size = dim3((N_batch + num_threads_j - 1) / num_threads_j);
-    unsigned int sm_size = 2 * num_threads_j * (sizeof(RealType) + sizeof(RealTypeComm));
+    unsigned int sm_size = num_threads_j * (sizeof(RealType) + sizeof(RealTypeComm));
     kernelReduceCurrBlockOneSide<RealType, RealTypeComm><<<grid_size, block_size, sm_size>>>(x_cur, x_nbr_buf, fact_cur, fact_nbr, N_batch);
 }
 

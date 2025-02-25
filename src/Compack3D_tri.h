@@ -42,7 +42,7 @@ template<typename MemSpaceType, typename RealType>
 void freeFactBuffers(RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*);
 
 template<typename RealType>
-void factPartitionedTriHost(RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType&, RealType&, RealType*, RealType*, RealType*, const int, const int, const int, MPI_Comm);
+void factPartitionedTriHost(RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, const int, const int, const int, MPI_Comm);
 
 template<typename MemSpaceType, typename RealType>
 void factPartitionedTri(RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, RealType&, RealType&, RealType*, RealType*, RealType*, const unsigned int, const unsigned int, const unsigned int, MPI_Comm);
@@ -54,6 +54,21 @@ void distSolve (RealType*, RealTypeComm*, RealTypeComm*, RealTypeComm*, RealType
 
 template<typename RealType, typename RealTypeComm, typename MemSpaceType>
 void distSolve (RealType*, RealTypeComm*, RealTypeComm*, RealTypeComm*, RealType*, RealType*, RealType*, const unsigned int, const unsigned int,  MPI_Comm, MPI_Request*, MPI_Status*, RealTypeComm*, RealTypeComm*, RealTypeComm*);
+
+
+template<typename RealType>
+void vanillaLocalSolTriPCR (RealType*, const RealType*, const RealType*, const RealType*, const int, const int);
+
+template<typename RealType>
+void vanillaLocalSolTriPCRBatch (RealType*, const RealType*, const RealType*, const RealType*, const int, const int, const int);
+
+
+template<typename RealType>
+void localFactTri (RealType*, RealType*, RealType*, RealType*, RealType*, RealType*, const int, const int);
+
+
+template<typename RealType, typename RealTypeComm>
+void vanillaDistSolve(RealType&, RealTypeComm&, RealTypeComm&, RealTypeComm&, RealType*, RealType*, RealType*, const int, MPI_Comm);
 
 
 } // namespace tri

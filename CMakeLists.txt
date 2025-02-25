@@ -20,6 +20,8 @@ set(COMPACK3D_DEVICE_ARCH              "Default" CACHE STRING "Device architectu
 set(COMPACK3D_BUILD_UNIT_TESTS               OFF CACHE BOOL   "Compile unit tests")
 set(COMPACK3D_BUILD_BENCHMARK_TESTS          OFF CACHE BOOL   "Compile benchmark tests")
 set(COMPACK3D_BUILD_STENCIL_APIS             OFF CACHE BOOL   "Build APIs of Pade or explicit schemes")
+set(COMPACK3D_MPI_EXEC_PREFIX             "None" CACHE STRING "MPI execution configuration")
+
 
 if (${CMAKE_BUILD_TYPE} STREQUAL "Help")
     message(STATUS
@@ -192,6 +194,17 @@ endif()
 add_subdirectory(src)
 
 if (${COMPACK3D_BUILD_UNIT_TESTS})
+    if(${COMPACK3D_MPI_EXEC_PREFIX} STREQUAL "None")
+        if(ENV{COMPACK3D_MPI_EXEC_PREFIX})
+            set(COMPACK3D_MPI_EXEC_PREFIX $ENV{COMPACK3D_MPI_EXEC_PREFIX})
+            message(STATUS "Set MPI execution prefix from ENV{COMPACK3D_MPI_EXEC_PREFIX}.")
+        else()
+            message(WARNING "The unit test is enabled but COMPACK3D_MPI_EXEC_PREFIX is not set. A default setting is used.")
+            set(COMPACK3D_MPI_EXEC_PREFIX "mpiexec -n 1")
+        endif()
+    endif()
+    message(STATUS "MPI execution prefix used in the unit tests: \"${COMPACK3D_MPI_EXEC_PREFIX}\"")
+    string(REPLACE " " ";" COMPACK3D_MPI_EXEC_PREFIX ${COMPACK3D_MPI_EXEC_PREFIX})
     include(CTest)
     add_subdirectory(unit_tests)
 endif()

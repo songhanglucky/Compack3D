@@ -39,8 +39,8 @@ int main(int argc, char* argv[]) {
     //////////////////////////
     // INPUT CONFIGURATIONS //
     //////////////////////////
-    constexpr unsigned int NUM_GRIDS_I = 256;
-    constexpr unsigned int NUM_GRIDS_J = 256;
+    constexpr unsigned int NUM_GRIDS_I = 254;
+    constexpr unsigned int NUM_GRIDS_J = 255;
     constexpr unsigned int NUM_GRIDS_K = 256;
 
 

@@ -81,6 +81,7 @@ void allocFactBuffers(
     static_assert(std::is_same<MemSpaceType, MemSpace::Host>::value || std::is_same<MemSpaceType, MemSpace::Device>::value, "Valid MemSpace typenames are MemSpace::Host and MemSpace::Device.");
 
     if ((*fact_local_prev_buf) != nullptr) throw std::invalid_argument("\"*fact_local_prev_buf\" must be nullptr initially to be allocated safely.");
+    if ((*fact_local_curr_buf) != nullptr) throw std::invalid_argument("\"*fact_local_curr_buf\" must be nullptr initially to be allocated safely.");
     if ((*fact_local_next_buf) != nullptr) throw std::invalid_argument("\"*fact_local_next_buf\" must be nullptr initially to be allocated safely.");
     if ((*fact_dist_prev_buf)  != nullptr) throw std::invalid_argument("\"*fact_dist_prev_buf\" must be nullptr initially to be allocated safely.");
     if ((*fact_dist_curr_buf)  != nullptr) throw std::invalid_argument("\"*fact_dist_curr_buf\" must be nullptr initially to be allocated safely.");
@@ -88,17 +89,17 @@ void allocFactBuffers(
     if ((*Si_buf)              != nullptr) throw std::invalid_argument("\"*Si_buf\" must be nullptr initially to be allocated safely.");
     if ((*Ri_buf)              != nullptr) throw std::invalid_argument("\"*Si_buf\" must be nullptr initially to be allocated safely.");
 
-    const unsigned int local_fact_size = (N_sub - 2) * log2Ceil(N_sub - 2);
+    const unsigned int local_fact_size = (N_sub - 1) * log2Ceil<unsigned int>(N_sub - 1);
     const unsigned int dist_fact_size  = numDistSolSteps<unsigned int>(Np);
-    const int local_soln_size = N_sub - 2;
-    memAllocArray<MemSpaceType, RealType>(fact_local_prev_buf, local_fact_size);
-    memAllocArray<MemSpaceType, RealType>(fact_local_curr_buf, local_fact_size);
-    memAllocArray<MemSpaceType, RealType>(fact_local_next_buf, local_fact_size);
-    memAllocArray<MemSpaceType, RealType>(fact_dist_prev_buf , dist_fact_size);
-    memAllocArray<MemSpaceType, RealType>(fact_dist_curr_buf , dist_fact_size);
-    memAllocArray<MemSpaceType, RealType>(fact_dist_next_buf , dist_fact_size);
-    memAllocArray<MemSpaceType, RealType>(Si_buf             , local_soln_size);
-    memAllocArray<MemSpaceType, RealType>(Ri_buf             , local_soln_size);
+    const int local_soln_size = N_sub - 1;
+    memAllocArray<MemSpaceType  , RealType>(fact_local_prev_buf, local_fact_size);
+    memAllocArray<MemSpaceType  , RealType>(fact_local_curr_buf, local_fact_size);
+    memAllocArray<MemSpaceType  , RealType>(fact_local_next_buf, local_fact_size);
+    memAllocArray<MemSpace::Host, RealType>(fact_dist_prev_buf ,  dist_fact_size);
+    memAllocArray<MemSpace::Host, RealType>(fact_dist_curr_buf ,  dist_fact_size);
+    memAllocArray<MemSpace::Host, RealType>(fact_dist_next_buf ,  dist_fact_size);
+    memAllocArray<MemSpaceType  , RealType>(Si_buf             , local_soln_size);
+    memAllocArray<MemSpaceType  , RealType>(Ri_buf             , local_soln_size);
 }
 
 
@@ -163,6 +164,58 @@ void vanillaLocalSolTriPCR(
             x_write[i] = fact_curr[idx_fact] * x_read[i];
             if (row_label & 0b100) x_write[i] += fact_prev[idx_fact] * x_read[i -  stride];
             if (row_label & 0b001) x_write[i] += fact_next[idx_fact] * x_read[i +  stride];
+            
+        }
+        stride <<= 1;
+        level ++;
+    }
+    if (level & 0b1) for (int i = 0; i < N; i++) x[i] = x_buf[i];
+    delete [] x_buf;
+}
+
+
+
+/*!
+ * Simulation of local solve process (solve along continuous memory)
+ * \param [in, out] x                   right-hand side of the system and the solution as the output
+ * \param [in]      fact_prev           factorization coefficients of the previous row
+ * \param [in]      fact_curr           factorization coefficients of the current row
+ * \param [in]      fact_next           factorization coefficients of the next row
+ * \param [in]      N                   size (total number of rows) of the local system
+ * \param [in]      batch_size          number of batches
+ * \param [in]      max_sub_sys_size    maximum sub-system size that can be solved with one memory load
+ */
+template<typename RealType>
+void vanillaLocalSolTriPCRBatch(
+        RealType*                x,
+        const RealType*  fact_prev,
+        const RealType*  fact_curr,
+        const RealType*  fact_next,
+        const int                N,
+        const int       batch_size,
+        const int max_sub_sys_size
+) {
+    RealType* x_buf = new RealType [N];
+    int stride = 1;
+    int level  = 0;
+    while (stride < N) {
+        RealType* x_read  = (level & 0b1) ? x_buf : x;
+        RealType* x_write = (level & 0b1) ? x : x_buf;
+        for (int i = 0; i < N; i++) {
+            const int i_sub = i / stride;
+            const int n_sub = (N + stride - 1 - (i % stride)) / stride;
+
+            const int row_label = 0b010
+                                + ((i_sub >        0 ) << 2)
+                                + ((i_sub < (n_sub-1))     );
+
+            const int idx_fact = level * N + locFactIdx(i, N, stride, max_sub_sys_size);
+            for (int batch_offset = 0; batch_offset < batch_size; batch_offset ++) {
+                const int i_batch = i + batch_offset * N;
+                x_write[i] = fact_curr[idx_fact] * x_read[i];
+                if (row_label & 0b100) x_write[i] += fact_prev[idx_fact] * x_read[i - stride];
+                if (row_label & 0b001) x_write[i] += fact_next[idx_fact] * x_read[i + stride];
+            }
             
         }
         stride <<= 1;
@@ -472,15 +525,6 @@ void distFactTri(RealType* block_fact_prev, RealType* block_fact_curr, RealType*
                 L_curr         *=  fact_curr_step;
                 U_curr         *=  fact_curr_step;
                 fact_prev_step *= -fact_curr_step;
-
-                //mat2x2AMultInvB<RealType>(fact_prev_step, L_curr, D_prev);
-                //mat2x2AXPY<RealType>(L_curr, fact_prev_step, L_prev, 0.0, -1.0); // L_curr =        - fact_prev_step * L_prev
-                //mat2x2AXPY<RealType>(D_curr, fact_prev_step, U_prev, 1.0, -1.0); // D_curr = D_curr - fact_prev_step * U_prev
-                //mat2x2Inv<RealType>(fact_curr_step, D_curr);
-                //for (int j = 0; j < 4; j++) D_curr[j] = (j == 0) + (j == 3); // set D_curr to identity
-                //mat2x2AXPY<RealType>(L_curr, fact_curr_step, L_curr, 0.0, 1.0);
-                //mat2x2AXPY<RealType>(U_curr, fact_curr_step, U_curr, 0.0, 1.0);
-                //mat2x2AXPY<RealType>(fact_prev_step, fact_curr_step, fact_prev_step, 0.0, -1.0);
             }
 
             if(detach_row_lo <= rank_next && rank_next < detach_row_hi) {
@@ -496,15 +540,6 @@ void distFactTri(RealType* block_fact_prev, RealType* block_fact_curr, RealType*
                 L_curr         *=  fact_curr_step;
                 U_curr         *=  fact_curr_step;
                 fact_next_step *= -fact_curr_step;
-
-                //mat2x2AMultInvB<RealType>(fact_next_step, U_curr, D_next);
-                //mat2x2AXPY<RealType>(U_curr, fact_next_step, U_next, 0.0, -1.0); // U_curr =        - fact_next_step * U_next
-                //mat2x2AXPY<RealType>(D_curr, fact_next_step, L_next, 1.0, -1.0); // D_curr = D_curr - fact_next_step * L_next
-                //mat2x2Inv<RealType>(fact_curr_step, D_curr);
-                //for (int j = 0; j < 4; j++) D_curr[j] = (j == 0) + (j == 3); // set D_curr to identity
-                //mat2x2AXPY<RealType>(L_curr, fact_curr_step, L_curr, 0.0, 1.0);
-                //mat2x2AXPY<RealType>(U_curr, fact_curr_step, U_curr, 0.0, 1.0);
-                //mat2x2AXPY<RealType>(fact_next_step, fact_curr_step, fact_next_step, 0.0, -1.0);
             }
 
             if(detach_row_lo <= rank_curr && rank_curr < detach_row_hi) {
@@ -514,7 +549,7 @@ void distFactTri(RealType* block_fact_prev, RealType* block_fact_curr, RealType*
                 MPI_Waitall(2, &mpi_reqs[0], &mpi_stats[0]);
             }
 
-            fact_idx_orig += 1;
+            fact_idx_orig ++;
         } // if ((N_sub > 1) && (N_sub & 0b1))
 
         // Regular PCR
@@ -547,24 +582,11 @@ void distFactTri(RealType* block_fact_prev, RealType* block_fact_curr, RealType*
             U_curr         *=  fact_curr_step;
             fact_prev_step *= -fact_curr_step;
             fact_next_step *= -fact_curr_step;
-
-            //mat2x2AMultInvB<RealType>(fact_prev_step, L_curr, D_prev);
-            //mat2x2AXPY<RealType>(L_curr, fact_prev_step, L_prev, 0.0, -1.0); // L_curr =        - fact_prev_step * L_prev
-            //mat2x2AXPY<RealType>(D_curr, fact_prev_step, U_prev, 1.0, -1.0); // D_curr = D_curr - fact_prev_step * U_prev
-            //mat2x2AMultInvB<RealType>(fact_next_step, U_curr, D_next);
-            //mat2x2AXPY<RealType>(U_curr, fact_next_step, U_next, 0.0, -1.0); // U_curr =        - fact_next_step * U_next
-            //mat2x2AXPY<RealType>(D_curr, fact_next_step, L_next, 1.0, -1.0); // D_curr = D_curr - fact_next_step * L_next
-            //mat2x2Inv<RealType>(fact_curr_step, D_curr);
-            //for (int j = 0; j < 4; j++) D_curr[j] = (j == 0) + (j == 3); // set D_curr to identity
-            //mat2x2AXPY<RealType>(L_curr, fact_curr_step, L_curr, 0.0, 1.0);
-            //mat2x2AXPY<RealType>(U_curr, fact_curr_step, U_curr, 0.0, 1.0);
-            //mat2x2AXPY<RealType>(fact_prev_step, fact_curr_step, fact_prev_step, 0.0, -1.0);
-            //mat2x2AXPY<RealType>(fact_next_step, fact_curr_step, fact_next_step, 0.0, -1.0);
         } // if (rank_curr < N_attached)
 
         stride <<= 1;
         N_sub  >>= 1;
-        fact_idx_orig += 4;
+        fact_idx_orig ++;
     } // while ((stride << 1) <= Np)
 
     // reattach
@@ -600,18 +622,6 @@ void distFactTri(RealType* block_fact_prev, RealType* block_fact_curr, RealType*
                 U_curr         *=  fact_curr_step;
                 fact_prev_step *= -fact_curr_step;
                 fact_next_step *= -fact_curr_step;
-                //mat2x2AMultInvB<RealType>(fact_prev_step, L_curr, D_prev);
-                //mat2x2AXPY<RealType>(L_curr, fact_prev_step, L_prev, 0.0, -1.0); // L_curr =        - fact_prev_step * L_prev
-                //mat2x2AXPY<RealType>(D_curr, fact_prev_step, U_prev, 1.0, -1.0); // D_curr = D_curr - fact_prev_step * U_prev
-                //mat2x2AMultInvB<RealType>(fact_next_step, U_curr, D_next);
-                //mat2x2AXPY<RealType>(U_curr, fact_next_step, U_next, 0.0, -1.0); // U_curr =        - fact_next_step * U_next
-                //mat2x2AXPY<RealType>(D_curr, fact_next_step, L_next, 1.0, -1.0); // D_curr = D_curr - fact_next_step * L_next
-                //mat2x2Inv<RealType>(fact_curr_step, D_curr);
-                //for (int j = 0; j < 4; j++) D_curr[j] = (j == 0) + (j == 3); // set D_curr to identity
-                //mat2x2AXPY<RealType>(L_curr, fact_curr_step, L_curr, 0.0, 1.0);
-                //mat2x2AXPY<RealType>(U_curr, fact_curr_step, U_curr, 0.0, 1.0);
-                //mat2x2AXPY<RealType>(fact_prev_step, fact_curr_step, fact_prev_step, 0.0, -1.0);
-                //mat2x2AXPY<RealType>(fact_next_step, fact_curr_step, fact_next_step, 0.0, -1.0);
             }
 
             if(attach_row_lo <= rank_prev && rank_prev < attach_row_hi) {
@@ -624,7 +634,7 @@ void distFactTri(RealType* block_fact_prev, RealType* block_fact_curr, RealType*
                 MPI_Waitall(1, &mpi_reqs[1], &mpi_stats[1]);
             }
 
-            fact_idx_orig += 4;
+            fact_idx_orig ++;
         } // if (Np & stride)
         stride >>= 1;
     } // while (stride)
@@ -665,6 +675,9 @@ void factPartitionedTriHost(
     RealType& L = LDU[0];
     RealType& D = LDU[1];
     RealType& U = LDU[2];
+    L = part_L[0];
+    D = part_D[0];
+    U = part_U[0];
 
     RealType* local_L = &part_L[1];
     RealType* local_D = &part_D[1];
@@ -674,30 +687,8 @@ void factPartitionedTriHost(
     RealType Ui = local_U[N_local - 1];
     local_L[          0] = 0.0;
     local_U[N_local - 1] = 0.0;
-    //RealType Li[3];
-    //Li[0] = local_L2[0];
-    //Li[1] = local_L1[0];
-    //Li[2] = local_L2[1];
-    //local_L2[0] = 0.0;
-    //local_L1[0] = 0.0;
-    //local_L2[1] = 0.0;
-
-    //RealType Ui[3];
-    //Ui[0] = local_U2[N_local - 2];
-    //Ui[1] = local_U1[N_local - 1];
-    //Ui[2] = local_U2[N_local - 1];
-    //local_U2[N_local - 2] = 0.0;
-    //local_U1[N_local - 1] = 0.0;
-    //local_U2[N_local - 1] = 0.0;
 
     localFactTri(fact_local_prev, fact_local_curr, fact_local_next, local_L, local_D, local_U, N_local, max_local_fact_size);
-
-    // Set Si to Li see H. Song, K.V. Matsuno, J.R. West et al., JCP, 2022
-    //for (int j = 0; j < (2 * N_local); j ++) Si[j] = 0.0;
-    //Si[0          ] = Li[0];
-    //Si[    N_local] = Li[1];
-    //Si[1 + N_local] = Li[2];
-    //vanillaLocalSolPentaPCRBatch(Si, fact_local_prev_2, fact_local_prev_1, fact_local_curr, fact_local_next_1, fact_local_next_2, N_local, 2, max_local_fact_size);
 
     // Set Si to Li, and set Ri to Ui. See H. Song, K.V. Matsuno, J.R. West et al., JCP, 2022
     for (int j = 0; j < N_local; j++) {
@@ -709,49 +700,12 @@ void factPartitionedTriHost(
     vanillaLocalSolTriPCR(Si, fact_local_prev, fact_local_curr, fact_local_next, N_local, max_local_fact_size);
     vanillaLocalSolTriPCR(Ri, fact_local_prev, fact_local_curr, fact_local_next, N_local, max_local_fact_size);
 
-    //RealType Si_top[4], Si_bot[4];
-    //Si_top[0b00] = Si[0          ];
-    //Si_top[0b10] = Si[1          ];
-    //Si_top[0b01] = Si[    N_local];
-    //Si_top[0b11] = Si[1 + N_local];
-    //Si_bot[0b00] = Si[N_local - 2];
-    //Si_bot[0b10] = Si[N_local - 1];
-    //Si_bot[0b01] = Si[N_local - 2 + N_local];
-    //Si_bot[0b11] = Si[N_local - 1 + N_local];
-
-    //// Set Ri to Ui see H. Song, K.V. Matsuno, J.R. West et al., JCP, 2022
-    //for (int j = 0; j < (2 * N_local); j ++) Ri[j] = 0.0;
-    //Ri[N_local     - 2] = Ui[0]; // local_U2[N_local - 2];
-    //Ri[N_local     - 1] = Ui[1]; // local_U1[N_local - 1];
-    //Ri[N_local * 2 - 1] = Ui[2]; // local_U2[N_local - 1];
-    //vanillaLocalSolPentaPCRBatch<RealType>(Ri, fact_local_prev_2, fact_local_prev_1, fact_local_curr, fact_local_next_1, fact_local_next_2, N_local, 2, max_local_fact_size);
-
-    //RealType Ri_top[4], Ri_bot[4];
-    //Ri_top[0b00] = Ri[0          ];
-    //Ri_top[0b10] = Ri[1          ];
-    //Ri_top[0b01] = Ri[    N_local];
-    //Ri_top[0b11] = Ri[1 + N_local];
-    //Ri_bot[0b00] = Ri[N_local - 2];
-    //Ri_bot[0b10] = Ri[N_local - 1];
-    //Ri_bot[0b01] = Ri[N_local - 2 + N_local];
-    //Ri_bot[0b11] = Ri[N_local - 1 + N_local];
     RealType Si_top = Si[          0];
     RealType Ri_top = Ri[          0];
     RealType Si_bot = Si[N_local - 1];
     RealType Ri_bot = Ri[N_local - 1];
 
     // Assemble reduced system
-    //RealType Si_prev_bot[4], Ri_prev_bot[4];
-    //int rank_curr;
-    //MPI_Comm_rank(comm_sub, &rank_curr);
-    //MPI_Request mpi_reqs [4];
-    //MPI_Status  mpi_stats[4];
-    //MPI_Irecv(Si_prev_bot, 4, MPIDataType<RealType>::value, (rank_curr + Np - 1) % Np, 133, comm_sub, &mpi_reqs[0]);
-    //MPI_Irecv(Ri_prev_bot, 4, MPIDataType<RealType>::value, (rank_curr + Np - 1) % Np, 113, comm_sub, &mpi_reqs[1]);
-    //MPI_Isend(Si_bot, 4, MPIDataType<RealType>::value, (rank_curr + 1) % Np, 133, comm_sub, &mpi_reqs[2]);
-    //MPI_Isend(Ri_bot, 4, MPIDataType<RealType>::value, (rank_curr + 1) % Np, 113, comm_sub, &mpi_reqs[3]);
-    //MPI_Waitall(4, &mpi_reqs[0], &mpi_stats[0]);
-
     RealType Si_prev_bot, Ri_prev_bot;
     int rank_curr;
     MPI_Comm_rank(comm_sub, &rank_curr);
@@ -762,16 +716,6 @@ void factPartitionedTriHost(
     MPI_Isend(&Si_bot, 1, MPIDataType<RealType>::value, (rank_curr + 1) % Np, 133, comm_sub, &mpi_reqs[2]);
     MPI_Isend(&Ri_bot, 1, MPIDataType<RealType>::value, (rank_curr + 1) % Np, 113, comm_sub, &mpi_reqs[3]);
     MPI_Waitall(4, &mpi_reqs[0], &mpi_stats[0]);
-
-    //RealType LDU_hat [12];
-    //RealType* L_hat = &LDU_hat[0];
-    //RealType* D_hat = &LDU_hat[4];
-    //RealType* U_hat = &LDU_hat[8];
-    //for (int j = 0; j < 4; j++) D_hat[j] = D[j];
-    //mat2x2AXPY<RealType>(L_hat, L, Si_prev_bot, 0.0, -1.0);
-    //mat2x2AXPY<RealType>(U_hat, U, Ri_top     , 0.0, -1.0);
-    //mat2x2AXPY<RealType>(D_hat, L, Ri_prev_bot, 1.0, -1.0);
-    //mat2x2AXPY<RealType>(D_hat, U, Si_top     , 1.0, -1.0);
 
     RealType LDU_hat [3];
     RealType& L_hat = LDU_hat[0];
@@ -791,9 +735,9 @@ void factPartitionedTriHost(
  * \param [out] fact_local_prev      factorization coefficients of the previous rows in the local diagonal block solve in each step
  * \param [out] fact_local_curr      factorization coefficients of the current rows in the local diagonal block solve in each step
  * \param [out] fact_local_next      factorization coefficients of the next rows in the local diagonal block solve in each step
- * \param [out] fact_dist_prev       factorization coefficients of the previous block in the distributed solve in each step
- * \param [out] fact_dist_curr       factorization coefficients of the current block in the distributed solve in each step
- * \param [out] fact_dist_next       factorization coefficients of the next block in the distributed solve in each step
+ * \param [out] fact_dist_prev       factorization coefficients of the previous block in the distributed solve in each step -- always stored in the host memory for tridiagonal systems
+ * \param [out] fact_dist_curr       factorization coefficients of the current block in the distributed solve in each step  -- always stored in the host memory for tridiagonal systems 
+ * \param [out] fact_dist_next       factorization coefficients of the next block in the distributed solve in each step     -- always stored in the host memory for tridiagonal systems
  * \param [out] Si                   inv(Di) * Li_tilde see Eq.(15) in H. Song, K.V. Matsuno, J.R. West et al., JCP, 2022
  * \param [out] Ri                   inv(Di) * Ui_tilde see Eq.(16) in H. Song, K.V. Matsuno, J.R. West et al., JCP, 2022
  * \param [out] Li_tilde_tail        non-zero entries in Li_tilde
@@ -821,32 +765,23 @@ void factPartitionedTri(
     RealType* fact_local_prev_host = nullptr;
     RealType* fact_local_curr_host = nullptr;
     RealType* fact_local_next_host = nullptr;
-    RealType* fact_dist_prev_host  = nullptr;
-    RealType* fact_dist_curr_host  = nullptr;
-    RealType* fact_dist_next_host  = nullptr;
     RealType* Si_host              = nullptr;
     RealType* Ri_host              = nullptr;
 
-    const unsigned int local_fact_size = (N_sub - 2) * log2Ceil(N_sub - 2);
+    const unsigned int local_fact_size = (N_sub - 1) * log2Ceil(N_sub - 1);
     const unsigned int dist_fact_size  = numDistSolSteps<unsigned int>(Np);
-    const unsigned int local_soln_size = N_sub - 2;
+    const unsigned int local_soln_size = N_sub - 1;
 
     if constexpr (std::is_same<MemSpaceType, MemSpace::Device>::value) {
         memAllocArray<MemSpace::Host, RealType>(&fact_local_prev_host, local_fact_size);
         memAllocArray<MemSpace::Host, RealType>(&fact_local_curr_host, local_fact_size);
         memAllocArray<MemSpace::Host, RealType>(&fact_local_next_host, local_fact_size);
-        memAllocArray<MemSpace::Host, RealType>(&fact_dist_prev_host, dist_fact_size);
-        memAllocArray<MemSpace::Host, RealType>(&fact_dist_curr_host, dist_fact_size);
-        memAllocArray<MemSpace::Host, RealType>(&fact_dist_next_host, dist_fact_size);
         memAllocArray<MemSpace::Host, RealType>(&Si_host, local_soln_size);
         memAllocArray<MemSpace::Host, RealType>(&Ri_host, local_soln_size);
     } else {
         fact_local_prev_host = fact_local_prev;
         fact_local_curr_host = fact_local_curr;
         fact_local_next_host = fact_local_next;
-        fact_dist_prev_host  = fact_dist_prev;
-        fact_dist_curr_host  = fact_dist_curr;
-        fact_dist_next_host  = fact_dist_next;
         Si_host              = Si;
         Ri_host              = Ri;
     }
@@ -856,24 +791,18 @@ void factPartitionedTri(
 
     factPartitionedTriHost<RealType>(
             fact_local_prev_host, fact_local_curr_host, fact_local_next_host,
-            fact_dist_prev_host, fact_dist_curr_host, fact_dist_next_host, Si_host, Ri_host,
+            fact_dist_prev, fact_dist_curr, fact_dist_next, Si_host, Ri_host,
             part_L, part_D, part_U, N_sub, Np, max_local_fact_size, comm_sub);
 
     if constexpr (std::is_same<MemSpaceType, MemSpace::Device>::value) {
         deepCopy<MemSpace::Device, MemSpace::Host, RealType>(fact_local_prev, fact_local_prev_host, local_fact_size);
         deepCopy<MemSpace::Device, MemSpace::Host, RealType>(fact_local_curr, fact_local_curr_host, local_fact_size);
         deepCopy<MemSpace::Device, MemSpace::Host, RealType>(fact_local_next, fact_local_next_host, local_fact_size);
-        deepCopy<MemSpace::Device, MemSpace::Host, RealType>(fact_dist_prev, fact_dist_prev_host, dist_fact_size);
-        deepCopy<MemSpace::Device, MemSpace::Host, RealType>(fact_dist_curr, fact_dist_curr_host, dist_fact_size);
-        deepCopy<MemSpace::Device, MemSpace::Host, RealType>(fact_dist_next, fact_dist_next_host, dist_fact_size);
         deepCopy<MemSpace::Device, MemSpace::Host, RealType>(Si, Si_host, local_soln_size);
         deepCopy<MemSpace::Device, MemSpace::Host, RealType>(Ri, Ri_host, local_soln_size);
         memFreeArray<MemSpace::Host, RealType>(fact_local_prev_host);
         memFreeArray<MemSpace::Host, RealType>(fact_local_curr_host);
         memFreeArray<MemSpace::Host, RealType>(fact_local_next_host);
-        memFreeArray<MemSpace::Host, RealType>(fact_dist_prev_host);
-        memFreeArray<MemSpace::Host, RealType>(fact_dist_curr_host);
-        memFreeArray<MemSpace::Host, RealType>(fact_dist_next_host);
         memFreeArray<MemSpace::Host, RealType>(Si_host);
         memFreeArray<MemSpace::Host, RealType>(Ri_host);
     } 
@@ -964,7 +893,7 @@ void distSolve (RealType* x_curr, RealTypeComm* x_prev_buf, RealTypeComm* x_curr
             }
 
             if(detach_row_lo <= rank_curr && rank_curr < detach_row_hi) {
-                copyAndCast2D<RealTypeComm, RealType>(x_curr_buf, x_curr, 2, N_batch, N_batch);
+                copyAndCast2D<RealTypeComm, RealType>(x_curr_buf, x_curr, 1, N_batch, N_batch);
                 if constexpr (!USE_DEVICE_AWARE_COMM) {
                     deepCopy<MemSpace::Host, MemSpaceType, RealTypeComm>(x_curr_buf_host, x_curr_buf, NUM_COMM_ENTRIES);
                 } else {
@@ -975,7 +904,7 @@ void distSolve (RealType* x_curr, RealTypeComm* x_prev_buf, RealTypeComm* x_curr
                 MPI_Waitall(2, &mpi_reqs[0], &mpi_stats[0]);
             }
 
-            fact_idx_orig += 4;
+            fact_idx_orig ++;
         } // if (Np & stride)
 
         // Regular PCR
@@ -992,14 +921,14 @@ void distSolve (RealType* x_curr, RealTypeComm* x_prev_buf, RealTypeComm* x_curr
             }
             MPI_Irecv(x_prev_buf_host, NUM_COMM_ENTRIES, MPIDataType<RealTypeComm>::value, rank_prev, 451, comm_sub, &mpi_reqs[0]);
             MPI_Irecv(x_next_buf_host, NUM_COMM_ENTRIES, MPIDataType<RealTypeComm>::value, rank_next, 461, comm_sub, &mpi_reqs[1]);
-            copyAndCast2D<RealTypeComm, RealType>(x_curr_buf, x_curr, 2, N_batch, N_batch);
+            copyAndCast2D<RealTypeComm, RealType>(x_curr_buf, x_curr, 1, N_batch, N_batch);
             if constexpr (!USE_DEVICE_AWARE_COMM) {
                 deepCopy<MemSpace::Host, MemSpaceType, RealTypeComm>(x_curr_buf_host, x_curr_buf, NUM_COMM_ENTRIES);
             } else {
                 deviceFence();
             }
-            MPI_Isend(x_curr_buf_host, 2, MPIDataType<RealTypeComm>::value, rank_next, 451, comm_sub, &mpi_reqs[2]);
-            MPI_Isend(x_curr_buf_host, 2, MPIDataType<RealTypeComm>::value, rank_prev, 461, comm_sub, &mpi_reqs[3]);
+            MPI_Isend(x_curr_buf_host, NUM_COMM_ENTRIES, MPIDataType<RealTypeComm>::value, rank_next, 451, comm_sub, &mpi_reqs[2]);
+            MPI_Isend(x_curr_buf_host, NUM_COMM_ENTRIES, MPIDataType<RealTypeComm>::value, rank_prev, 461, comm_sub, &mpi_reqs[3]);
             MPI_Waitall(4, mpi_reqs, mpi_stats);
             if constexpr (!USE_DEVICE_AWARE_COMM) {
                 deepCopy<MemSpaceType, MemSpace::Host, RealTypeComm>(x_next_buf, x_next_buf_host, NUM_COMM_ENTRIES);
@@ -1010,7 +939,7 @@ void distSolve (RealType* x_curr, RealTypeComm* x_prev_buf, RealTypeComm* x_curr
 
         stride <<= 1;
         N_sub  >>= 1;
-        fact_idx_orig += 4;
+        fact_idx_orig ++;
     } // while ((stride << 1) <= Np)
 
     stride >>= 2;
@@ -1027,8 +956,8 @@ void distSolve (RealType* x_curr, RealTypeComm* x_prev_buf, RealTypeComm* x_curr
 
             if(attach_row_lo <= rank_curr && rank_curr < N_attached) {
                 if constexpr (USE_DEVICE_AWARE_COMM) deviceFence();
-                MPI_Irecv(x_prev_buf_host, 2, MPIDataType<RealTypeComm>::value, rank_prev, 451, comm_sub, &mpi_reqs[0]);
-                MPI_Irecv(x_next_buf_host, 2, MPIDataType<RealTypeComm>::value, rank_next, 461, comm_sub, &mpi_reqs[1]);
+                MPI_Irecv(x_prev_buf_host, NUM_COMM_ENTRIES, MPIDataType<RealTypeComm>::value, rank_prev, 451, comm_sub, &mpi_reqs[0]);
+                MPI_Irecv(x_next_buf_host, NUM_COMM_ENTRIES, MPIDataType<RealTypeComm>::value, rank_next, 461, comm_sub, &mpi_reqs[1]);
                 MPI_Waitall(2, &mpi_reqs[0], &mpi_stats[0]);
                 if constexpr (!USE_DEVICE_AWARE_COMM) {
                     deepCopy<MemSpaceType, MemSpace::Host>(x_next_buf, x_next_buf_host, NUM_COMM_ENTRIES);
@@ -1038,26 +967,26 @@ void distSolve (RealType* x_curr, RealTypeComm* x_prev_buf, RealTypeComm* x_curr
             }
 
             if(attach_row_lo <= rank_prev && rank_prev < N_attached) {
-                copyAndCast2D<RealTypeComm, RealType>(x_curr_buf, x_curr, 2, N_batch, N_batch);
+                copyAndCast2D<RealTypeComm, RealType>(x_curr_buf, x_curr, 1, N_batch, N_batch);
                 if constexpr (!USE_DEVICE_AWARE_COMM) {
                     deepCopy<MemSpace::Host, MemSpaceType>(x_curr_buf_host, x_curr_buf, NUM_COMM_ENTRIES);
                 } else {
                     deviceFence();
                 }
-                MPI_Send(x_curr_buf_host, 2, MPIDataType<RealTypeComm>::value, rank_prev, 461, comm_sub);
+                MPI_Send(x_curr_buf_host, NUM_COMM_ENTRIES, MPIDataType<RealTypeComm>::value, rank_prev, 461, comm_sub);
             }
 
             if(attach_row_lo <= rank_next && rank_next < N_attached) {
-                copyAndCast2D<RealTypeComm, RealType>(x_curr_buf, x_curr, 2, N_batch, N_batch);
+                copyAndCast2D<RealTypeComm, RealType>(x_curr_buf, x_curr, 1, N_batch, N_batch);
                 if constexpr (!USE_DEVICE_AWARE_COMM) {
                     deepCopy<MemSpace::Host, MemSpaceType>(x_curr_buf_host, x_curr_buf, NUM_COMM_ENTRIES);
                 } else {
                     deviceFence();
                 }
-                MPI_Send(x_curr_buf_host, 2, MPIDataType<RealTypeComm>::value, rank_next, 451, comm_sub);
+                MPI_Send(x_curr_buf_host, NUM_COMM_ENTRIES, MPIDataType<RealTypeComm>::value, rank_next, 451, comm_sub);
             }
 
-            fact_idx_orig += 4;
+            fact_idx_orig ++;
         } // if (Np & stride)
         stride >>= 1;
     } // while (stride)
@@ -1111,6 +1040,135 @@ void distSolve (RealType* x_curr, RealTypeComm* x_prev_buf, RealTypeComm* x_curr
 
 
 
+/*!
+ * Vanilla distributed solve
+ * \param [in, out]    x_curr             right-hand side (b_hat) as input and solution (x_tilde) as output (see Fig.4 and Eq.(17) in Song et al. JCP (2022) 111443)
+ * \param [in]         x_prev_buf         receive buffer for x_tilde from the previous rank
+ * \param [in]         x_curr_buf         send buffer for x_tilde in the current rank
+ * \param [in]         x_next_buf         receive buffer for x_tilde from the next rank
+ * \param [in]         block_fact_prev    distributed factorization coefficients for the lower-diagonal block
+ * \param [in]         block_fact_curr    distributed factorization coefficients for the diagonal block
+ * \param [in]         block_fact_next    distributed factorization coefficients for the upper-diagonal block
+ * \param [in]         Np                 total number of partitions in the solve direction
+ * \param [in]         comm_sub           MPI sub-communicator of partitions in the solve direction for each reduced system
+ */
+template<typename RealType, typename RealTypeComm = RealType>
+void vanillaDistSolve (RealType& x_curr, RealTypeComm& x_prev_buf, RealTypeComm& x_curr_buf, RealTypeComm& x_next_buf,
+        RealType* block_fact_prev, RealType* block_fact_curr, RealType* block_fact_next,
+        const int Np, MPI_Comm comm_sub)
+{
+#ifdef COMPACK3D_DEBUG_MODE_ENABLED
+    {
+        int mpi_size;
+        MPI_Comm_size(comm_sub, &mpi_size);
+        if (Np > mpi_size) {
+            throw std::invalid_argument("Np is greater than maximum number of partitions involved in the reduced system.");
+        }
+    }
+#endif
+
+    int rank_curr;
+    MPI_Comm_rank(comm_sub, &rank_curr);
+
+    MPI_Request mpi_reqs [4];
+    MPI_Status  mpi_stats[4];
+
+    int stride = 1; // NOTE: stride is also equal to the number of sub-systems
+    int N_sub  = Np;
+    int fact_idx_orig = 0;
+
+    while (N_sub) {
+        // Detach process
+        if ((N_sub > 1) && (N_sub & 0b1)) {
+            N_sub -= 1;
+            const int detach_row_lo = N_sub * stride;
+            const int detach_row_hi = detach_row_lo + stride;
+            const int rank_prev = (rank_curr - stride + detach_row_hi) % detach_row_hi;
+            const int rank_next = (rank_curr + stride                ) % detach_row_hi;
+            RealType& fact_prev_step = block_fact_prev[fact_idx_orig];
+            RealType& fact_curr_step = block_fact_curr[fact_idx_orig];
+            RealType& fact_next_step = block_fact_next[fact_idx_orig];
+
+            if(detach_row_lo <= rank_prev && rank_prev < detach_row_hi) {
+                MPI_Recv(&x_prev_buf, 1, MPIDataType<RealTypeComm>::value, rank_prev, 451, comm_sub, &mpi_stats[2]);
+                x_curr = fact_curr_step * x_curr + x_prev_buf * fact_prev_step;
+            }
+
+            if(detach_row_lo <= rank_next && rank_next < detach_row_hi) {
+                MPI_Recv(&x_next_buf, 1, MPIDataType<RealTypeComm>::value, rank_next, 461, comm_sub, &mpi_stats[3]);
+                x_curr = fact_curr_step * x_curr + x_next_buf * fact_next_step;
+            }
+
+            if(detach_row_lo <= rank_curr && rank_curr < detach_row_hi) {
+                x_curr_buf = static_cast<RealTypeComm>(x_curr);
+                MPI_Isend(&x_curr_buf, 1, MPIDataType<RealTypeComm>::value, rank_prev, 461, comm_sub, &mpi_reqs[0]);
+                MPI_Isend(&x_curr_buf, 1, MPIDataType<RealTypeComm>::value, rank_next, 451, comm_sub, &mpi_reqs[1]);
+                MPI_Waitall(2, &mpi_reqs[0], &mpi_stats[0]);
+            }
+
+            fact_idx_orig ++;
+        } // if (Np & stride)
+
+        // Regular PCR
+        const int N_attached = N_sub * stride;
+        const int rank_prev = (rank_curr - stride + N_attached) % N_attached;
+        const int rank_next = (rank_curr + stride             ) % N_attached;
+        RealType& fact_prev_step = block_fact_prev[fact_idx_orig];
+        RealType& fact_curr_step = block_fact_curr[fact_idx_orig];
+        RealType& fact_next_step = block_fact_next[fact_idx_orig];
+
+        if (rank_curr < N_attached) {
+            MPI_Irecv(&x_prev_buf, 1, MPIDataType<RealTypeComm>::value, rank_prev, 451, comm_sub, &mpi_reqs[0]);
+            MPI_Irecv(&x_next_buf, 1, MPIDataType<RealTypeComm>::value, rank_next, 461, comm_sub, &mpi_reqs[1]);
+            x_curr_buf = static_cast<RealTypeComm>(x_curr);
+            MPI_Isend(&x_curr_buf, 1, MPIDataType<RealTypeComm>::value, rank_next, 451, comm_sub, &mpi_reqs[2]);
+            MPI_Isend(&x_curr_buf, 1, MPIDataType<RealTypeComm>::value, rank_prev, 461, comm_sub, &mpi_reqs[3]);
+            MPI_Waitall(4, mpi_reqs, mpi_stats);
+            x_curr = fact_curr_step * x_curr + fact_prev_step * x_prev_buf + fact_next_step * x_next_buf;
+        } // if (rank_curr < N_attached)
+
+        stride <<= 1;
+        N_sub  >>= 1;
+        fact_idx_orig ++;
+    } // while ((stride << 1) <= Np)
+
+    stride >>= 2;
+    while (stride) {
+        if ((Np > stride) && (Np & stride)) {
+            // Reattach row floor(Np / (stride<<1)) * (stride<<1) + j for j in [0, stride)
+            const int attach_row_lo = (Np / (stride << 1)) * (stride << 1);
+            const int N_attached = attach_row_lo + stride;
+            const int rank_prev = (rank_curr - stride + N_attached) % N_attached;
+            const int rank_next = (rank_curr + stride             ) % N_attached;
+            RealType& fact_prev_step = block_fact_prev[fact_idx_orig];
+            RealType& fact_curr_step = block_fact_curr[fact_idx_orig];
+            RealType& fact_next_step = block_fact_next[fact_idx_orig];
+
+            if(attach_row_lo <= rank_curr && rank_curr < N_attached) {
+                MPI_Irecv(&x_prev_buf, 1, MPIDataType<RealTypeComm>::value, rank_prev, 451, comm_sub, &mpi_reqs[0]);
+                MPI_Irecv(&x_next_buf, 1, MPIDataType<RealTypeComm>::value, rank_next, 461, comm_sub, &mpi_reqs[1]);
+                MPI_Waitall(2, &mpi_reqs[0], &mpi_stats[0]);
+                x_curr = fact_curr_step * x_curr + fact_prev_step * x_prev_buf + fact_next_step * x_next_buf;
+            }
+
+            if(attach_row_lo <= rank_prev && rank_prev < N_attached) {
+                x_curr_buf = static_cast<RealTypeComm>(x_curr);
+                MPI_Send(&x_curr_buf, 1, MPIDataType<RealTypeComm>::value, rank_prev, 461, comm_sub);
+            }
+
+            if(attach_row_lo <= rank_next && rank_next < N_attached) {
+                x_curr_buf = static_cast<RealTypeComm>(x_curr);
+                MPI_Send(&x_curr_buf, 1, MPIDataType<RealTypeComm>::value, rank_next, 451, comm_sub);
+            }
+
+            fact_idx_orig ++;
+        } // if (Np & stride)
+        stride >>= 1;
+    } // while (stride)
+}
+
+
+
 
 
 
@@ -1141,10 +1199,24 @@ template void factPartitionedTri<MemSpace::Device, float>( float*,  float*,  flo
 
 template void distSolve<double, double, MemSpace::Device>(double*, double*, double*, double*, double*, double*, double*, const unsigned int, const unsigned int, MPI_Comm, double*, double*, double*);
 template void distSolve<double,  float, MemSpace::Device>(double*,  float*,  float*,  float*, double*, double*, double*, const unsigned int, const unsigned int, MPI_Comm,  float*,  float*,  float*);
+template void distSolve<double, double, MemSpace::Host  >(double*, double*, double*, double*, double*, double*, double*, const unsigned int, const unsigned int, MPI_Comm, double*, double*, double*);
+template void distSolve<double,  float, MemSpace::Host  >(double*,  float*,  float*,  float*, double*, double*, double*, const unsigned int, const unsigned int, MPI_Comm,  float*,  float*,  float*);
 
 template void distSolve<double, double, MemSpace::Device>(double*, double*, double*, double*, double*, double*, double*, const unsigned int, const unsigned int, MPI_Comm, MPI_Request*, MPI_Status*, double*, double*, double*);
 template void distSolve<double,  float, MemSpace::Device>(double*,  float*,  float*,  float*, double*, double*, double*, const unsigned int, const unsigned int, MPI_Comm, MPI_Request*, MPI_Status*,  float*,  float*,  float*);
+template void distSolve<double, double, MemSpace::Host  >(double*, double*, double*, double*, double*, double*, double*, const unsigned int, const unsigned int, MPI_Comm, MPI_Request*, MPI_Status*, double*, double*, double*);
+template void distSolve<double,  float, MemSpace::Host  >(double*,  float*,  float*,  float*, double*, double*, double*, const unsigned int, const unsigned int, MPI_Comm, MPI_Request*, MPI_Status*,  float*,  float*,  float*);
 
+template void vanillaLocalSolTriPCR<double>(double*, const double*, const double*, const double*, const int, const int);
+template void vanillaLocalSolTriPCR< float>( float*, const  float*, const  float*, const  float*, const int, const int);
+template void vanillaLocalSolTriPCRBatch<double>(double*, const double*, const double*, const double*, const int, const int, const int);
+template void vanillaLocalSolTriPCRBatch< float>( float*, const  float*, const  float*, const  float*, const int, const int, const int);
+
+template void localFactTri<double>(double*, double*, double*, double*, double*, double*, const int, const int);
+
+template void vanillaDistSolve<double, float>(double&,  float&,  float&,  float&, double*, double*, double*, const int, MPI_Comm);
+template void vanillaDistSolve<double,double>(double&, double&, double&, double&, double*, double*, double*, const int, MPI_Comm);
+template void vanillaDistSolve< float, float>( float&,  float&,  float&,  float&,  float*,  float*,  float*, const int, MPI_Comm);
 
 } // namespace tri
 } // namespace cmpk
