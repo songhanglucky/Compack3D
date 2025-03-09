@@ -144,6 +144,7 @@ void localSolPentaPCRDimI(
         const unsigned int Ni, unsigned const int Nj, const unsigned int Nk,
         const unsigned int arr_stride_i, const unsigned int arr_stride_j
 ) {
+#if defined(COMPACK3D_DEVICE_ARCH_H100) || defined(COMPACK3D_DEVICE_ARCH_H200)
     if (Ni <= 256) { // limited by the size of shared memory (16kB)
         constexpr unsigned int BLOCK_SIZE    = 512;
         constexpr unsigned int DATA_SEG      = 64;
@@ -175,6 +176,39 @@ void localSolPentaPCRDimI(
         kernelLocalSolPentaPCRDimI<RealType, NUM_THREADS_I, NUM_THREADS_K><<<grid_size, BLOCK_SIZE, smem_size>>>
             (x, fact_prev_2, fact_prev_1, fact_curr, fact_next_1, fact_next_2, max_sub_sys_size, Ni, Nj, Nk, arr_stride_i, arr_stride_j);
     }
+#else
+    if (Ni <= 256) { // limited by the size of shared memory (16kB)
+        constexpr unsigned int BLOCK_SIZE    = 512;
+        constexpr unsigned int DATA_SEG      = 64;
+        constexpr unsigned int NUM_THREADS_K = DATA_SEG / sizeof(RealType);
+        constexpr unsigned int NUM_THREADS_I = BLOCK_SIZE / NUM_THREADS_K;
+        const unsigned int smem_size = 2 * DATA_SEG * Ni;
+        dim3 grid_size  = dim3((Nk + NUM_THREADS_K - 1) / NUM_THREADS_K, Nj, 1);
+        //cudaFuncSetAttribute(kernelLocalSolPentaPCRDimI<RealType, NUM_THREADS_I, NUM_THREADS_K>, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared);
+        kernelLocalSolPentaPCRDimI<RealType, NUM_THREADS_I, NUM_THREADS_K><<<grid_size, BLOCK_SIZE, smem_size>>>
+            (x, fact_prev_2, fact_prev_1, fact_curr, fact_next_1, fact_next_2, max_sub_sys_size, Ni, Nj, Nk, arr_stride_i, arr_stride_j);
+    } else if (Ni <= 512) { // limited by the size of shared memory (16kB)
+        constexpr unsigned int BLOCK_SIZE    = 1024;
+        constexpr unsigned int DATA_SEG      = 32;
+        constexpr unsigned int NUM_THREADS_K = DATA_SEG / sizeof(RealType);
+        constexpr unsigned int NUM_THREADS_I = BLOCK_SIZE / NUM_THREADS_K;
+        const unsigned int smem_size = 2 * DATA_SEG * Ni;
+        dim3 grid_size  = dim3((Nk + NUM_THREADS_K - 1) / NUM_THREADS_K, Nj, 1);
+        //cudaFuncSetAttribute(kernelLocalSolPentaPCRDimI<RealType, NUM_THREADS_I, NUM_THREADS_K>, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared);
+        kernelLocalSolPentaPCRDimI<RealType, NUM_THREADS_I, NUM_THREADS_K><<<grid_size, BLOCK_SIZE, smem_size>>>
+            (x, fact_prev_2, fact_prev_1, fact_curr, fact_next_1, fact_next_2, max_sub_sys_size, Ni, Nj, Nk, arr_stride_i, arr_stride_j);
+    } else {
+        constexpr unsigned int BLOCK_SIZE    = 1024;
+        constexpr unsigned int DATA_SEG      = 8;
+        constexpr unsigned int NUM_THREADS_K = DATA_SEG / sizeof(RealType);
+        constexpr unsigned int NUM_THREADS_I = BLOCK_SIZE / NUM_THREADS_K;
+        const unsigned int smem_size = 2 * DATA_SEG * Ni;
+        dim3 grid_size  = dim3((Nk + NUM_THREADS_K - 1) / NUM_THREADS_K, Nj, 1);
+        //cudaFuncSetAttribute(kernelLocalSolPentaPCRDimI<RealType, NUM_THREADS_I, NUM_THREADS_K>, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared);
+        kernelLocalSolPentaPCRDimI<RealType, NUM_THREADS_I, NUM_THREADS_K><<<grid_size, BLOCK_SIZE, smem_size>>>
+            (x, fact_prev_2, fact_prev_1, fact_curr, fact_next_1, fact_next_2, max_sub_sys_size, Ni, Nj, Nk, arr_stride_i, arr_stride_j);
+    }
+#endif
 }
 
 
@@ -313,6 +347,7 @@ void localSolPentaPCRDimJ(
         const unsigned int Ni, unsigned const int Nj, const unsigned int Nk,
         const unsigned int arr_stride_i, const unsigned int arr_stride_j
 ) {
+#if defined(COMPACK3D_DEVICE_ARCH_H100) || defined(COMPACK3D_DEVICE_ARCH_H200)
     if (Ni <= 256) { // limited by the size of shared memory (16kB)
         constexpr unsigned int BLOCK_SIZE    = 512;
         constexpr unsigned int DATA_SEG      = 64;
@@ -344,6 +379,39 @@ void localSolPentaPCRDimJ(
         kernelLocalSolPentaPCRDimJ<RealType, NUM_THREADS_J, NUM_THREADS_K><<<grid_size, BLOCK_SIZE, smem_size>>>
             (x, fact_prev_2, fact_prev_1, fact_curr, fact_next_1, fact_next_2, max_sub_sys_size, Ni, Nj, Nk, arr_stride_i, arr_stride_j);
     }
+#else
+    if (Ni <= 256) { // limited by the size of shared memory (16kB)
+        constexpr unsigned int BLOCK_SIZE    = 512;
+        constexpr unsigned int DATA_SEG      = 64;
+        constexpr unsigned int NUM_THREADS_K = DATA_SEG / sizeof(RealType);
+        constexpr unsigned int NUM_THREADS_J = BLOCK_SIZE / NUM_THREADS_K;
+        const unsigned int smem_size = 2 * DATA_SEG * Nj;
+        dim3 grid_size  = {(Nk + NUM_THREADS_K - 1) / NUM_THREADS_K, 1, Ni};
+        //cudaFuncSetAttribute(kernelLocalSolPentaPCRDimJ<RealType, NUM_THREADS_J, NUM_THREADS_K>, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared);
+        kernelLocalSolPentaPCRDimJ<RealType, NUM_THREADS_J, NUM_THREADS_K><<<grid_size, BLOCK_SIZE, smem_size>>>
+            (x, fact_prev_2, fact_prev_1, fact_curr, fact_next_1, fact_next_2, max_sub_sys_size, Ni, Nj, Nk, arr_stride_i, arr_stride_j);
+    } else if (Ni <= 512) {
+        constexpr unsigned int BLOCK_SIZE    = 1024;
+        constexpr unsigned int DATA_SEG      = 32;
+        constexpr unsigned int NUM_THREADS_K = DATA_SEG / sizeof(RealType);
+        constexpr unsigned int NUM_THREADS_J = BLOCK_SIZE / NUM_THREADS_K;
+        const unsigned int smem_size = 2 * DATA_SEG * Nj;
+        dim3 grid_size  = {(Nk + NUM_THREADS_K - 1) / NUM_THREADS_K, 1, Ni};
+        //cudaFuncSetAttribute(kernelLocalSolPentaPCRDimJ<RealType, NUM_THREADS_J, NUM_THREADS_K>, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared);
+        kernelLocalSolPentaPCRDimJ<RealType, NUM_THREADS_J, NUM_THREADS_K><<<grid_size, BLOCK_SIZE, smem_size>>>
+            (x, fact_prev_2, fact_prev_1, fact_curr, fact_next_1, fact_next_2, max_sub_sys_size, Ni, Nj, Nk, arr_stride_i, arr_stride_j);
+    } else {
+        constexpr unsigned int BLOCK_SIZE    = 1024;
+        constexpr unsigned int DATA_SEG      = 8;
+        constexpr unsigned int NUM_THREADS_K = DATA_SEG / sizeof(RealType);
+        constexpr unsigned int NUM_THREADS_J = BLOCK_SIZE / NUM_THREADS_K;
+        const unsigned int smem_size = 2 * DATA_SEG * Nj;
+        dim3 grid_size  = {(Nk + NUM_THREADS_K - 1) / NUM_THREADS_K, 1, Ni};
+        //cudaFuncSetAttribute(kernelLocalSolPentaPCRDimJ<RealType, NUM_THREADS_J, NUM_THREADS_K>, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared);
+        kernelLocalSolPentaPCRDimJ<RealType, NUM_THREADS_J, NUM_THREADS_K><<<grid_size, BLOCK_SIZE, smem_size>>>
+            (x, fact_prev_2, fact_prev_1, fact_curr, fact_next_1, fact_next_2, max_sub_sys_size, Ni, Nj, Nk, arr_stride_i, arr_stride_j);
+    }
+#endif
 }
 
 
@@ -481,6 +549,7 @@ void localSolPentaPCRDimK(
         const unsigned int Ni, unsigned const int Nj, const unsigned int Nk,
         const unsigned int arr_stride_i, const unsigned int arr_stride_j
 ) {
+#if defined(COMPACK3D_DEVICE_ARCH_H100) || defined(COMPACK3D_DEVICE_ARCH_H200)
     if (Nk <= 256) {
         constexpr unsigned int NUM_THREADS_K = 128;
         constexpr unsigned int NUM_THREADS_J =  2 * sizeof(double) / sizeof(RealType); 
@@ -509,6 +578,36 @@ void localSolPentaPCRDimK(
         kernelLocalSolPentaPCRDimK<RealType, NUM_THREADS_K, NUM_THREADS_J><<<grid_size, BLOCK_SIZE, smem_size>>>
             (x, fact_prev_2, fact_prev_1, fact_curr, fact_next_1, fact_next_2, max_sub_sys_size, Ni, Nj, Nk, arr_stride_i, arr_stride_j);
     }
+#else
+    if (Nk <= 256) {
+        constexpr unsigned int NUM_THREADS_K = 128;
+        constexpr unsigned int NUM_THREADS_J =  2 * sizeof(double) / sizeof(RealType); 
+        constexpr unsigned int BLOCK_SIZE    = NUM_THREADS_K * NUM_THREADS_J;
+        const unsigned int smem_size = 2 * Nk * NUM_THREADS_J * sizeof(RealType);
+        dim3 grid_size  = dim3(1, (Nj + NUM_THREADS_J - 1) / NUM_THREADS_J, Ni);
+        //cudaFuncSetAttribute(kernelLocalSolPentaPCRDimK<RealType, NUM_THREADS_K, NUM_THREADS_J>, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared);
+        kernelLocalSolPentaPCRDimK<RealType, NUM_THREADS_K, NUM_THREADS_J><<<grid_size, BLOCK_SIZE, smem_size>>>
+            (x, fact_prev_2, fact_prev_1, fact_curr, fact_next_1, fact_next_2, max_sub_sys_size, Ni, Nj, Nk, arr_stride_i, arr_stride_j);
+    } else if (Nk <= 512) {
+        constexpr unsigned int NUM_THREADS_K = 256;
+        constexpr unsigned int NUM_THREADS_J = 2 * sizeof(double) / sizeof(RealType); 
+        constexpr unsigned int BLOCK_SIZE    = NUM_THREADS_K * NUM_THREADS_J;
+        const unsigned int smem_size = 2 * Nk * NUM_THREADS_J * sizeof(RealType);
+        dim3 grid_size  = dim3(1, (Nj + NUM_THREADS_J - 1) / NUM_THREADS_J, Ni);
+        //cudaFuncSetAttribute(kernelLocalSolPentaPCRDimK<RealType, NUM_THREADS_K, NUM_THREADS_J>, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared);
+        kernelLocalSolPentaPCRDimK<RealType, NUM_THREADS_K, NUM_THREADS_J><<<grid_size, BLOCK_SIZE, smem_size>>>
+            (x, fact_prev_2, fact_prev_1, fact_curr, fact_next_1, fact_next_2, max_sub_sys_size, Ni, Nj, Nk, arr_stride_i, arr_stride_j);
+    } else {
+        constexpr unsigned int NUM_THREADS_K = 1024;
+        constexpr unsigned int NUM_THREADS_J = sizeof(double) / sizeof(RealType); 
+        constexpr unsigned int BLOCK_SIZE    = NUM_THREADS_K * NUM_THREADS_J;
+        const unsigned int smem_size = 2 * Nk * NUM_THREADS_J * sizeof(RealType);
+        dim3 grid_size  = dim3(1, (Nj + NUM_THREADS_J - 1) / NUM_THREADS_J, Ni);
+        //cudaFuncSetAttribute(kernelLocalSolPentaPCRDimK<RealType, NUM_THREADS_K, NUM_THREADS_J>, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared);
+        kernelLocalSolPentaPCRDimK<RealType, NUM_THREADS_K, NUM_THREADS_J><<<grid_size, BLOCK_SIZE, smem_size>>>
+            (x, fact_prev_2, fact_prev_1, fact_curr, fact_next_1, fact_next_2, max_sub_sys_size, Ni, Nj, Nk, arr_stride_i, arr_stride_j);
+    }
+#endif
 }
 
 

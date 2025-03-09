@@ -40,7 +40,7 @@ target_include_directories(Compack3D_device
 target_link_libraries(Compack3D_device PUBLIC Compack3D_host ${MPI_CXX_LIBRARIES} ${COMPACK3D_RT_LIBS})
 
 
-add_library(Compack3D_api ${src_api})
+add_library(Compack3D_api OBJECT ${src_api})
 target_include_directories(Compack3D_api
     PRIVATE          ${CMAKE_CURRENT_SOURCE_DIR}
     SYSTEM INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}

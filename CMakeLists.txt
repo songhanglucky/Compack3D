@@ -81,14 +81,24 @@ endif()
 if    (${COMPACK3D_ENABLE_DEVICE_CUDA})                             #### CUDA
     set(tmp_var_device_prog_model "CUDA")
     add_compile_definitions(COMPACK3D_DEVICE_ENABLED_CUDA)
-    if(${COMPACK3D_DEVICE_ARCH} STREQUAL "Default")          # Nvidia Tesla V100
-        set(tmp_var_device_arch_label "Default (Nvidia Tesla V100)")
-        add_compile_definitions(COMPACK3D_DEVICE_ARCH_V100)
-        set(CMAKE_CUDA_ARCHITECTURES 70)
+    if(${COMPACK3D_DEVICE_ARCH} STREQUAL "Default")          # Nvidia Default
+        set(tmp_var_device_arch_label "Default")
     elseif(${COMPACK3D_DEVICE_ARCH} STREQUAL "V100")         # Nvidia Tesla V100
         add_compile_definitions(COMPACK3D_DEVICE_ARCH_V100)
         set(tmp_var_device_arch_label "Nvidia Tesla V100")
         set(CMAKE_CUDA_ARCHITECTURES 70)
+    elseif(${COMPACK3D_DEVICE_ARCH} STREQUAL "A100")         # Nvidia Tesla A100
+        add_compile_definitions(COMPACK3D_DEVICE_ARCH_A100)
+        set(tmp_var_device_arch_label "Nvidia Tesla A100")
+        set(CMAKE_CUDA_ARCHITECTURES 80)
+    elseif(${COMPACK3D_DEVICE_ARCH} STREQUAL "H100")         # Nvidia Tesla H100
+        add_compile_definitions(COMPACK3D_DEVICE_ARCH_H100)
+        set(tmp_var_device_arch_label "Nvidia Tesla H100")
+        set(CMAKE_CUDA_ARCHITECTURES 90)
+    elseif(${COMPACK3D_DEVICE_ARCH} STREQUAL "H200")         # Nvidia Tesla H100
+        add_compile_definitions(COMPACK3D_DEVICE_ARCH_H200)
+        set(tmp_var_device_arch_label "Nvidia Tesla H200")
+        set(CMAKE_CUDA_ARCHITECTURES 90)
     else()
         message(FATAL_ERROR "Unsupported CUDA device architecture:\n"
             "     COMPACK3D_DEVICE_ARCH = ${COMPACK3D_DEVICE_ARCH}")
